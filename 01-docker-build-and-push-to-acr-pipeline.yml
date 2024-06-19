@@ -18,8 +18,8 @@ variables:
 
   # Agent Pool
 pool:
- name: 'murthyagentpool'
-  
+  name: 'murthyagentpool'
+
 stages:
 - stage: Build
   displayName: Build and push stage
