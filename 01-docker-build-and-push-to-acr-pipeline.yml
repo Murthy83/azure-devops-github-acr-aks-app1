@@ -12,14 +12,14 @@ variables:
   # Container registry service connection established during pipeline creation
   dockerRegistryServiceConnection: '00bc1cce-7387-4413-934f-0c5960c2ddfd'
   imageRepository: 'app1nginx'
-  containerRegistry: 'macr3.azurecr.io'
+  containerRegistry: 'aksopsacr.azurecr.io'
   dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
   tag: '$(Build.BuildId)'
 
   # Agent Pool
 pool:
- name: 'murthyagentpool'
-  
+  name: 'murthyagentpool'
+
 stages:
 - stage: Build
   displayName: Build and push stage
