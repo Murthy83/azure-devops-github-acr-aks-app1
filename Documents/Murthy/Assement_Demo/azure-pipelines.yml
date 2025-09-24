@@ -1,0 +1,96 @@
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  awsRegion: 'us-east-1'
+  appName: 'hello-world-app'
+  ecrRepoName: 'hello-world-app'
+  awsAccountId: '$(AWS_ACCOUNT_ID)'   # set in Azure DevOps Library/Variables
+  containerRegistry: '$(awsAccountId).dkr.ecr.$(awsRegion).amazonaws.com'
+  dockerTag: '$(Build.BuildId)'       # unique tag per build
+  dockerImage: '$(containerRegistry)/$(ecrRepoName):$(dockerTag)'
+
+stages:
+  # ---------------------------
+  ## Deploy Infra (ECR, ECS, VPC, etc.)
+  # ---------------------------
+  - stage: DeployInfra
+    displayName: "Provision AWS Infra with Terraform"
+    jobs:
+      - job: TerraformApply
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+
+          - script: |
+              echo "Installing Terraform..."
+              curl -LO https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip
+              sudo unzip terraform_1.6.0_linux_amd64.zip -d /usr/local/bin/
+              terraform -version
+            displayName: 'Install Terraform'
+
+          - script: |
+              cd Infra
+              terraform init -input=false
+              terraform apply -auto-approve \
+                -var="aws_region=$(awsRegion)" \
+                -var="app_name=$(appName)" \
+                -var="ecs_cluster_name=$(appName)-cluster" \
+                -var="image_tag=$(dockerTag)"
+            displayName: 'Terraform Apply (Infra)'
+
+          - script: |
+              cd Infra
+              echo "##vso[task.setvariable variable=ECR_REPO_URL]$(terraform output -raw ecr_repository_url)"
+            displayName: "Export ECR repo URL to Pipeline Variable"
+
+  # ---------------------------
+  ## Build & Push Image
+  # ---------------------------
+  - stage: BuildAndPush
+    dependsOn: DeployInfra
+    displayName: "Build and Push Docker Image"
+    jobs:
+      - job: DockerBuildPush
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+
+          - script: |
+              echo "Logging in to AWS ECR..."
+              aws ecr get-login-password --region $(awsRegion) \
+                | docker login --username AWS --password-stdin $(containerRegistry)
+            displayName: 'Login to ECR'
+
+          - script: |
+              cd HelloWorld_ECS/app
+              echo "Building Docker image..."
+              docker build -t $(dockerImage) .
+              
+              echo "Pushing Docker image..."
+              docker push $(dockerImage)
+            displayName: 'Build and Push Docker Image'
+
+  # ---------------------------
+  ## Update ECS with New Image
+  # ---------------------------
+  - stage: UpdateECS
+    dependsOn: BuildAndPush
+    displayName: "Deploy New ECS Task Definition"
+    jobs:
+      - job: UpdateService
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: |
+              echo "Forcing ECS Service to pick up the new image..."
+              aws ecs update-service \
+                --cluster $(appName)-cluster \
+                --service $(appName)-service \
+                --force-new-deployment \
+                --region $(awsRegion)
+            displayName: 'Update ECS Service'
